@@ -105,7 +105,7 @@ void onConnect(void* context, MQTTAsync_successData* response)
 	opts.onSuccess = onSend;
 	opts.context = client;
 
-	pubmsg.payload = const_cast<char*>(PAYLOAD);
+	pubmsg.payload = PAYLOAD;
 	pubmsg.payloadlen = (int)strlen(PAYLOAD);
 	pubmsg.qos = QOS;
 	pubmsg.retained = 0;

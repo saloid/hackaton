@@ -1,3 +1,5 @@
+# SHELL=cygwin
+
 CXX		  := g++
 CXX_FLAGS := -Wall -Wextra -std=c++17 -ggdb
 
@@ -6,19 +8,17 @@ SRC		:= src
 INCLUDE	:= include
 LIB		:= lib
 
-LIBRARIES	:=
+LIBRARIES	:= 
 EXECUTABLE	:= main
 
 
 all: $(BIN)/$(EXECUTABLE)
 
 run: clean all
-	clear
 	./$(BIN)/$(EXECUTABLE)
 
 $(BIN)/$(EXECUTABLE): $(SRC)/*.cpp
-	$(CXX) $(CXX_FLAGS) -I$(INCLUDE) -L$(LIB) $^ -o $@ $(LIBRARIES)
+	$(CXX) $(CXX_FLAGS) -I$(INCLUDE) -L$(LIB) $^ -o $@ $(LIBRARIES) -lpaho-mqtt3as -lpthread
 
 clean:
-	@echo "clean project"
 	-rm -f $(BIN)/*
