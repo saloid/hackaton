@@ -1,156 +1,92 @@
-/*******************************************************************************
- * Copyright (c) 2012, 2018 IBM Corp.
- *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Eclipse Distribution License v1.0 which accompany this distribution. 
- *
- * The Eclipse Public License is available at 
- *   http://www.eclipse.org/legal/epl-v10.html
- * and the Eclipse Distribution License is available at 
- *   http://www.eclipse.org/org/documents/edl-v10.php.
- *
- * Contributors:
- *    Ian Craggs - initial contribution
- *******************************************************************************/
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include "MQTTAsync.h"
-
-#if !defined(WIN32)
-#include <unistd.h>
-#else
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
 #include <windows.h>
-#endif
+extern "C"
+{
+#include "MQTTClient.h"
+}
+#define ADDRESS "tcp://192.168.1.208:1883"
+#define CLIENTID "ExampleClientPub"
+#define TOPIC "mqtt_test/input"
+#define PAYLOAD "Hello World!"
+#define QOS 1
+#define TIMEOUT 10000L
+volatile MQTTClient_deliveryToken deliveredtoken;
 
-#if defined(_WRS_KERNEL)
-#include <OsWrapper.h>
-#endif
+int msgarrvd(void *context, char *topicName, int topicLen, MQTTClient_message *message)
+{
+	int i;
+	char *payloadptr;
 
-#define ADDRESS     "tcp://iot.eclipse.org:1883"
-#define CLIENTID    "ExampleClientPub"
-#define TOPIC       "MQTT Examples"
-#define PAYLOAD     "Hello World!"
-#define QOS         1
-#define TIMEOUT     10000L
+	printf("Message arrived\n");
+	printf("     topic: %s\n", topicName);
+	printf("   message: ");
 
-volatile MQTTAsync_token deliveredtoken;
-
-int finished = 0;
+	payloadptr = reinterpret_cast<char*>(message->payload);
+	for (i = 0; i < message->payloadlen; i++)
+	{
+		putchar(*payloadptr++);
+	}
+	putchar('\n');
+	MQTTClient_freeMessage(&message);
+	MQTTClient_free(topicName);
+	return 1;
+}
 
 void connlost(void *context, char *cause)
 {
-	MQTTAsync client = (MQTTAsync)context;
-	MQTTAsync_connectOptions conn_opts = MQTTAsync_connectOptions_initializer;
-	int rc;
-
 	printf("\nConnection lost\n");
 	printf("     cause: %s\n", cause);
+}
 
-	printf("Reconnecting\n");
+void delivered(void *context, MQTTClient_deliveryToken dt)
+{
+    printf("Message with token value %d delivery confirmed\n", dt);
+    deliveredtoken = dt;
+}
+
+int main(int argc, char *argv[])
+{
+	MQTTClient client;
+	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+	MQTTClient_message pubmsg = MQTTClient_message_initializer;
+	MQTTClient_deliveryToken token;
+	int rc;
+
+	MQTTClient_create(&client, ADDRESS, CLIENTID,
+					  MQTTCLIENT_PERSISTENCE_NONE, NULL);
 	conn_opts.keepAliveInterval = 20;
 	conn_opts.cleansession = 1;
-	if ((rc = MQTTAsync_connect(client, &conn_opts)) != MQTTASYNC_SUCCESS)
+	conn_opts.username = "mqtt_test";
+	conn_opts.password = "mqtt_test";
+
+	MQTTClient_setCallbacks(client, NULL, connlost, msgarrvd, delivered);
+
+	if ((rc = MQTTClient_connect(client, &conn_opts)) != MQTTCLIENT_SUCCESS)
 	{
-		printf("Failed to start connect, return code %d\n", rc);
- 		finished = 1;
+		printf("Failed to connect, return code %d\n", rc);
+		exit(-1);
 	}
-}
 
+	MQTTClient_subscribe(client, "mqtt_test/output", QOS);
 
-void onDisconnect(void* context, MQTTAsync_successData* response)
-{
-	printf("Successful disconnection\n");
-	finished = 1;
-}
-
-
-void onSend(void* context, MQTTAsync_successData* response)
-{
-	MQTTAsync client = (MQTTAsync)context;
-	MQTTAsync_disconnectOptions opts = MQTTAsync_disconnectOptions_initializer;
-	int rc;
-
-	printf("Message with token value %d delivery confirmed\n", response->token);
-
-	opts.onSuccess = onDisconnect;
-	opts.context = client;
-
-	if ((rc = MQTTAsync_disconnect(client, &opts)) != MQTTASYNC_SUCCESS)
-	{
-		printf("Failed to start sendMessage, return code %d\n", rc);
-		exit(EXIT_FAILURE);
-	}
-}
-
-
-void onConnectFailure(void* context, MQTTAsync_failureData* response)
-{
-	printf("Connect failed, rc %d\n", response ? response->code : 0);
-	finished = 1;
-}
-
-
-void onConnect(void* context, MQTTAsync_successData* response)
-{
-	MQTTAsync client = (MQTTAsync)context;
-	MQTTAsync_responseOptions opts = MQTTAsync_responseOptions_initializer;
-	MQTTAsync_message pubmsg = MQTTAsync_message_initializer;
-	int rc;
-
-	printf("Successful connection\n");
-	
-	opts.onSuccess = onSend;
-	opts.context = client;
-
-	pubmsg.payload = const_cast<char*>(PAYLOAD);
-	pubmsg.payloadlen = (int)strlen(PAYLOAD);
+	pubmsg.payload = const_cast<char *>(PAYLOAD);
+	pubmsg.payloadlen = strlen(PAYLOAD);
 	pubmsg.qos = QOS;
 	pubmsg.retained = 0;
-	deliveredtoken = 0;
-
-	if ((rc = MQTTAsync_sendMessage(client, TOPIC, &pubmsg, &opts)) != MQTTASYNC_SUCCESS)
+	MQTTClient_publishMessage(client, TOPIC, &pubmsg, &token);
+	printf("Waiting for up to %d seconds for publication of %s\n"
+		   "on topic %s for client with ClientID: %s\n",
+		   (int)(TIMEOUT / 1000), PAYLOAD, TOPIC, CLIENTID);
+	rc = MQTTClient_waitForCompletion(client, token, TIMEOUT);
+	printf("Message with delivery token %d delivered\n", token);
+	while (true)
 	{
-		printf("Failed to start sendMessage, return code %d\n", rc);
-		exit(EXIT_FAILURE);
+		Sleep(1000);
+		printf("loop\n");
 	}
+	MQTTClient_disconnect(client, 10000);
+	MQTTClient_destroy(&client);
+	return rc;
 }
-
-
-int main(int argc, char* argv[])
-{
-	MQTTAsync client;
-	MQTTAsync_connectOptions conn_opts = MQTTAsync_connectOptions_initializer;
-	int rc;
-
-	MQTTAsync_create(&client, ADDRESS, CLIENTID, MQTTCLIENT_PERSISTENCE_NONE, NULL);
-
-	MQTTAsync_setCallbacks(client, NULL, connlost, NULL, NULL);
-
-	conn_opts.keepAliveInterval = 20;
-	conn_opts.cleansession = 1;
-	conn_opts.onSuccess = onConnect;
-	conn_opts.onFailure = onConnectFailure;
-	conn_opts.context = client;
-	if ((rc = MQTTAsync_connect(client, &conn_opts)) != MQTTASYNC_SUCCESS)
-	{
-		printf("Failed to start connect, return code %d\n", rc);
-		exit(EXIT_FAILURE);
-	}
-
-	printf("Waiting for publication of %s\n"
-         "on topic %s for client with ClientID: %s\n",
-         PAYLOAD, TOPIC, CLIENTID);
-	while (!finished)
-		#if defined(WIN32)
-			Sleep(100);
-		#else
-			usleep(10000L);
-		#endif
-
-	MQTTAsync_destroy(&client);
- 	return rc;
-}
-  
